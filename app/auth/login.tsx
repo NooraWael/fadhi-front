@@ -90,12 +90,11 @@ const LoginScreen: React.FC = () => {
   };
 
   const handleSignUp = (): void => {
-    // TODO: Navigate to sign up screen
-    Alert.alert('Sign Up', 'Sign up screen will be implemented here');
+    router.push('/auth/signup');
   };
 
   const handleBack = (): void => {
-    router.back();
+    router.replace('/');
   };
 
   return (

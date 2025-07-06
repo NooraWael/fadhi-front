@@ -182,7 +182,7 @@ const ChatsMainPage: React.FC = () => {
   const renderChatItem = ({ item }: { item: ChatItem }) => (
     <TouchableOpacity 
       style={[styles.chatItem, { backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.05)' : '#FFFFFF' }]}
-      // onPress={() => router.push(`/chat/${item.id}`)} for later
+      onPress={() => router.push(`/chat/${item.id}`)} 
     >
       <View style={styles.chatContent}>
         <View style={styles.profileContainer}>
