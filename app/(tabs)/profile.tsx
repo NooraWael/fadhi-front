@@ -90,7 +90,8 @@ const ProfilePage: React.FC = () => {
     : require('@/assets/images/background-light.png');
 
   const handleEditProfile = () => {
-    Alert.alert('Edit Profile', 'Profile editing will be implemented here');
+   // Alert.alert('Edit Profile', 'Profile editing will be implemented here');
+    router.push(`/profile/${userProfile.id}`);
   };
 
   const handleChangeProfilePicture = () => {
