@@ -35,3 +35,10 @@ yarn-error.*
 
 # typescript
 *.tsbuildinfo
+
+# Firebase
+conf.ts
+firebase.ts
+
+# Ignore environment files
+.env

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -12,34 +12,22 @@ import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 
 import { useTheme } from '@/hooks/useThemeColor';
-import { userStorage } from '@/utils/storage';
+import { useAuth } from '@/providers/AuthProvider';
 
 const LandingScreen: React.FC = () => {
   const theme = useTheme();
-  const [isLoading, setIsLoading] = useState(true);
+  const { user, initializing } = useAuth();
 
   useEffect(() => {
-    checkAuthStatus();
-  }, []);
-
-  const checkAuthStatus = async () => {
-    try {
-      console.log('Checking auth status...');
-      const token = await userStorage.getToken();
-      console.log('Token found:', !!token);
-      
-      if (token) {
+    if (!initializing) {
+      if (user) {
         console.log('User is authenticated, navigating to tabs');
         router.replace('/(tabs)');
       } else {
         console.log('User is not authenticated, showing landing page');
-        setIsLoading(false);
       }
-    } catch (error) {
-      console.error('Error checking auth status:', error);
-      setIsLoading(false);
     }
-  };
+  }, [user, initializing]);
 
   const handleLogin = () => {
     console.log('Navigating to login');
@@ -58,7 +46,7 @@ const LandingScreen: React.FC = () => {
     router.replace('/(tabs)');
   };
 
-  if (isLoading) {
+  if (initializing) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
         <StatusBar 

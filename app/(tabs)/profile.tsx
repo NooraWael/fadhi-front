@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -16,8 +16,21 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 
 import { useTheme } from '@/hooks/useThemeColor';
+import { useAuth } from '@/providers/AuthProvider';
+import { signOut, updateUserProfile } from '@/services/auth';
+import { uploadProfilePicture } from '@/services/imageUpload';
+import { 
+  UserSettings, 
+  DeviceSettings, 
+  updateUserSetting, 
+  updateDeviceSetting, 
+  subscribeToUserSettings, 
+  loadDeviceSettings,
+  initializeUserSettings 
+} from '@/services/settings';
 
 const { width, height } = Dimensions.get('window');
 
@@ -39,50 +52,89 @@ interface UserProfile {
   };
 }
 
-interface Settings {
-  notifications: boolean;
-  darkMode: boolean;
-  readReceipts: boolean;
-  lastSeen: boolean;
-  biometricAuth: boolean;
-  autoDownloadMedia: boolean;
-  secretChatNotifications: boolean;
-  spotifyIntegration: boolean;
-}
-
 const ProfilePage: React.FC = () => {
   const theme = useTheme();
   const isDarkMode = theme.text === '#FAF7F0';
+  const { user, userProfile, refreshProfile } = useAuth();
   
-  // Mock user profile data
-  const [userProfile] = useState<UserProfile>({
-    id: 'user1',
-    username: 'you_username',
-    fullName: 'Your Name',
-    profilePicture: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&h=150&fit=crop&crop=face',
-    bio: 'Love music, coffee, and good conversations ✨',
-    phoneNumber: '+973 9876 5432',
-    email: 'you@example.com',
-    joinDate: new Date('2024-01-15'),
-    isOnline: true,
+  // Debug logging
+  console.log('🔍 ProfilePage - user:', user?.uid);
+  console.log('🔍 ProfilePage - userProfile:', userProfile);
+  
+  // Separate user settings (Firestore) and device settings (local storage)
+  const [userSettings, setUserSettings] = useState<UserSettings>({
+    readReceipts: true,
+    lastSeen: true,
+    biometricAuth: true,
+    secretChatNotifications: true,
+    notifications: true,
+    autoDownloadMedia: false,
+    spotifyIntegration: true,
+  });
+
+  const [deviceSettings, setDeviceSettings] = useState<DeviceSettings>({
+    darkMode: isDarkMode,
+  });
+
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+
+  // Create display profile from Firebase data
+  const displayProfile: UserProfile = {
+    id: user?.uid || 'unknown',
+    username: userProfile?.username || 'Loading...',
+    fullName: userProfile ? `${userProfile.firstName} ${userProfile.lastName}`.trim() : 'Loading...',
+    profilePicture: userProfile?.profilePicture || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&h=150&fit=crop&crop=face',
+    bio: userProfile?.bio || "Hey there! I'm new to فاضي ✨",
+    phoneNumber: userProfile?.phone || '+973 0000 0000',
+    email: userProfile?.email || user?.email || 'you@example.com',
+    joinDate: userProfile?.createdAt ? (
+      typeof userProfile.createdAt.toDate === 'function' 
+        ? userProfile.createdAt.toDate() 
+        : new Date(userProfile.createdAt.seconds * 1000)
+    ) : new Date(),
+    isOnline: userProfile?.isOnline || false,
     currentSong: {
       title: 'Umm Kulthum - Alf Leila wa Leila',
       artist: 'Umm Kulthum',
       albumCover: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=100&h=100&fit=crop',
       isPlaying: true,
     }
-  });
+  };
 
-  const [settings, setSettings] = useState<Settings>({
-    notifications: true,
-    darkMode: isDarkMode,
-    readReceipts: true,
-    lastSeen: true,
-    biometricAuth: true,
-    autoDownloadMedia: false,
-    secretChatNotifications: true,
-    spotifyIntegration: true,
-  });
+  // Load settings on component mount
+  useEffect(() => {
+    let unsubscribeUserSettings: (() => void) | null = null;
+
+    const initializeSettings = async () => {
+      try {
+        // Load device settings from local storage
+        const loadedDeviceSettings = await loadDeviceSettings();
+        setDeviceSettings(loadedDeviceSettings);
+
+        // Initialize and subscribe to user settings from Firestore
+        if (user?.uid) {
+          // First, ensure user has settings initialized
+          await initializeUserSettings(user.uid);
+          
+          // Then subscribe to settings changes
+          unsubscribeUserSettings = subscribeToUserSettings(user.uid, (settings) => {
+            setUserSettings(settings);
+          });
+        }
+      } catch (error) {
+        console.error('Error loading settings:', error);
+      }
+    };
+
+    initializeSettings();
+
+    // Cleanup subscription on unmount
+    return () => {
+      if (unsubscribeUserSettings) {
+        unsubscribeUserSettings();
+      }
+    };
+  }, [user?.uid]);
 
   // Background image based on theme
   const backgroundImage = isDarkMode 
@@ -91,23 +143,162 @@ const ProfilePage: React.FC = () => {
 
   const handleEditProfile = () => {
    // Alert.alert('Edit Profile', 'Profile editing will be implemented here');
-    router.push(`/profile/${userProfile.id}`);
+    router.push(`/profile/${displayProfile.id}`);
   };
 
-  const handleChangeProfilePicture = () => {
-    Alert.alert(
-      'Profile Picture',
-      'Choose an option',
-      [
-        { text: 'Camera', onPress: () => console.log('Camera selected') },
-        { text: 'Gallery', onPress: () => console.log('Gallery selected') },
-        { text: 'Cancel', style: 'cancel' }
-      ]
-    );
+  const handleChangeProfilePicture = async () => {
+    if (isUploadingImage) return; // Prevent multiple uploads
+
+    try {
+      // Request permissions
+      const { status: cameraStatus } = await ImagePicker.requestCameraPermissionsAsync();
+      const { status: mediaStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (cameraStatus !== 'granted' || mediaStatus !== 'granted') {
+        Alert.alert(
+          'Permissions Required',
+          'Camera and photo library permissions are required to change your profile picture.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
+      Alert.alert(
+        'Profile Picture',
+        'Choose an option',
+        [
+          { 
+            text: 'Camera', 
+            onPress: () => pickImageFromCamera() 
+          },
+          { 
+            text: 'Gallery', 
+            onPress: () => pickImageFromGallery() 
+          },
+          { text: 'Cancel', style: 'cancel' }
+        ]
+      );
+    } catch (error) {
+      console.error('Error requesting permissions:', error);
+      Alert.alert('Error', 'Failed to request permissions');
+    }
   };
 
-  const handleSettingChange = (key: keyof Settings, value: boolean) => {
-    setSettings(prev => ({ ...prev, [key]: value }));
+  const pickImageFromCamera = async () => {
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        await uploadImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error picking image from camera:', error);
+      Alert.alert('Error', 'Failed to take photo');
+    }
+  };
+
+  const pickImageFromGallery = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        await uploadImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error picking image from gallery:', error);
+      Alert.alert('Error', 'Failed to select image');
+    }
+  };
+
+  const uploadImage = async (imageUri: string) => {
+    if (!user?.uid) {
+      Alert.alert('Error', 'User not authenticated');
+      return;
+    }
+
+    setIsUploadingImage(true);
+
+    try {
+      console.log('🔄 Uploading profile picture...');
+      console.log('🔍 Current userProfile.profilePicturePath:', userProfile?.profilePicturePath);
+      
+      // Upload image to Firebase Storage and get the actual storage path
+      const uploadResult = await uploadProfilePicture(
+        imageUri,
+        user.uid,
+        userProfile?.profilePicturePath || undefined
+      );
+
+      console.log('✅ Profile picture uploaded:', uploadResult.downloadURL);
+      console.log('✅ Storage path:', uploadResult.path);
+
+      // Update user profile in Firestore with the correct path
+      await updateUserProfile(user.uid, {
+        profilePicture: uploadResult.downloadURL,
+        profilePicturePath: uploadResult.path
+      });
+
+      console.log('✅ Profile updated in Firestore');
+      
+      // Refresh the profile data to update the UI
+      await refreshProfile();
+      console.log('✅ Profile refreshed in UI');
+      
+      Alert.alert('Success', 'Profile picture updated successfully!');
+
+    } catch (error: any) {
+      console.error('❌ Error uploading profile picture:', error);
+      Alert.alert(
+        'Upload Failed', 
+        error.message || 'Failed to upload profile picture. Please try again.'
+      );
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
+  // Handle user setting changes (auto-save to Firestore)
+  const handleUserSettingChange = async (key: keyof UserSettings, value: boolean) => {
+    if (!user?.uid) return;
+    
+    try {
+      // Update local state immediately for responsive UI
+      setUserSettings(prev => ({ ...prev, [key]: value }));
+      
+      // Auto-save to Firestore
+      await updateUserSetting(user.uid, key, value);
+    } catch (error) {
+      console.error(`Error updating ${key} setting:`, error);
+      // Revert local state on error
+      setUserSettings(prev => ({ ...prev, [key]: !value }));
+      Alert.alert('Settings Error', `Failed to update ${key} setting`);
+    }
+  };
+
+  // Handle device setting changes (save to local storage)
+  const handleDeviceSettingChange = async (key: keyof DeviceSettings, value: boolean) => {
+    try {
+      // Update local state immediately for responsive UI
+      setDeviceSettings(prev => ({ ...prev, [key]: value }));
+      
+      // Auto-save to device storage
+      await updateDeviceSetting(key, value);
+    } catch (error) {
+      console.error(`Error updating device ${key} setting:`, error);
+      // Revert local state on error
+      setDeviceSettings(prev => ({ ...prev, [key]: !value }));
+      Alert.alert('Settings Error', `Failed to update ${key} setting`);
+    }
   };
 
   const handleLogout = () => {
@@ -119,9 +310,15 @@ const ProfilePage: React.FC = () => {
         { 
           text: 'Logout', 
           style: 'destructive',
-          onPress: () => {
-            // Clear user data and navigate to auth
-            router.replace('/auth/login');
+          onPress: async () => {
+            try {
+              await signOut();
+              // Navigate directly to login screen
+              router.replace('/auth/login');
+            } catch (error: any) {
+              console.error('Logout error:', error);
+              Alert.alert('Logout Failed', error.message || 'Failed to logout');
+            }
           }
         }
       ]
@@ -263,38 +460,43 @@ const ProfilePage: React.FC = () => {
             <TouchableOpacity 
               style={styles.profileImageContainer}
               onPress={handleChangeProfilePicture}
+              disabled={isUploadingImage}
             >
-              <Image source={{ uri: userProfile.profilePicture }} style={styles.profileImage} />
+              <Image source={{ uri: displayProfile.profilePicture }} style={styles.profileImage} />
               <View style={styles.profileImageOverlay}>
-                <Feather name="camera" size={20} color="#FFFFFF" />
+                {isUploadingImage ? (
+                  <MaterialIcons name="hourglass-empty" size={20} color="#FFFFFF" />
+                ) : (
+                  <Feather name="camera" size={20} color="#FFFFFF" />
+                )}
               </View>
-              {userProfile.isOnline && <View style={styles.onlineIndicator} />}
+              {displayProfile.isOnline && <View style={styles.onlineIndicator} />}
             </TouchableOpacity>
             
             <View style={styles.profileInfo}>
               <Text style={[styles.fullName, { color: theme.text }]}>
-                {userProfile.fullName}
+                {displayProfile.fullName}
               </Text>
               <Text style={[styles.username, { color: theme.text, opacity: 0.7 }]}>
-                @{userProfile.username}
+                @{displayProfile.username}
               </Text>
               <Text style={[styles.bio, { color: theme.text, opacity: 0.8 }]}>
-                {userProfile.bio}
+                {displayProfile.bio}
               </Text>
               
-              {userProfile.currentSong && (
+              {displayProfile.currentSong && (
                 <View style={styles.musicStatus}>
-                  <Image source={{ uri: userProfile.currentSong.albumCover }} style={styles.albumCover} />
+                  <Image source={{ uri: displayProfile.currentSong.albumCover }} style={styles.albumCover} />
                   <View style={styles.musicInfo}>
                     <Text style={[styles.musicTitle, { color: theme.text }]} numberOfLines={1}>
-                      🎵 {userProfile.currentSong.title}
+                      🎵 {displayProfile.currentSong.title}
                     </Text>
                     <Text style={[styles.musicArtist, { color: theme.text, opacity: 0.7 }]} numberOfLines={1}>
-                      {userProfile.currentSong.artist}
+                      {displayProfile.currentSong.artist}
                     </Text>
                   </View>
                   <MaterialIcons 
-                    name={userProfile.currentSong.isPlaying ? 'music-note' : 'pause'} 
+                    name={displayProfile.currentSong.isPlaying ? 'music-note' : 'pause'} 
                     size={16} 
                     color="#1DB954" 
                   />
@@ -332,32 +534,32 @@ const ProfilePage: React.FC = () => {
               'Read Receipts',
               'Let others know when you read their messages',
               'check-circle',
-              settings.readReceipts,
-              (value) => handleSettingChange('readReceipts', value)
+              userSettings.readReceipts,
+              (value) => handleUserSettingChange('readReceipts', value)
             )}
             
             {renderSettingItem(
               'Last Seen',
               'Show when you were last online',
               'clock',
-              settings.lastSeen,
-              (value) => handleSettingChange('lastSeen', value)
+              userSettings.lastSeen,
+              (value) => handleUserSettingChange('lastSeen', value)
             )}
             
             {renderSettingItem(
               'Biometric Authentication',
               'Use fingerprint or face unlock',
               'shield',
-              settings.biometricAuth,
-              (value) => handleSettingChange('biometricAuth', value)
+              userSettings.biometricAuth,
+              (value) => handleUserSettingChange('biometricAuth', value)
             )}
             
             {renderSettingItem(
               'Secret Chat Notifications',
               'Show notifications for encrypted chats',
               'lock',
-              settings.secretChatNotifications,
-              (value) => handleSettingChange('secretChatNotifications', value)
+              userSettings.secretChatNotifications,
+              (value) => handleUserSettingChange('secretChatNotifications', value)
             )}
           </View>
 
@@ -369,24 +571,32 @@ const ProfilePage: React.FC = () => {
               'Notifications',
               'Receive push notifications',
               'bell',
-              settings.notifications,
-              (value) => handleSettingChange('notifications', value)
+              userSettings.notifications,
+              (value) => handleUserSettingChange('notifications', value)
+            )}
+            
+            {renderSettingItem(
+              'Dark Mode',
+              'Use dark theme (device-specific)',
+              'moon',
+              deviceSettings.darkMode,
+              (value) => handleDeviceSettingChange('darkMode', value)
             )}
             
             {renderSettingItem(
               'Auto-Download Media',
               'Download photos and videos automatically',
               'download',
-              settings.autoDownloadMedia,
-              (value) => handleSettingChange('autoDownloadMedia', value)
+              userSettings.autoDownloadMedia,
+              (value) => handleUserSettingChange('autoDownloadMedia', value)
             )}
             
             {renderSettingItem(
               'Spotify Integration',
               'Share what you\'re listening to',
               'music',
-              settings.spotifyIntegration,
-              (value) => handleSettingChange('spotifyIntegration', value)
+              userSettings.spotifyIntegration,
+              (value) => handleUserSettingChange('spotifyIntegration', value)
             )}
           </View>
 

@@ -19,7 +19,8 @@ import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 
 import { useTheme } from '@/hooks/useThemeColor';
-import { userStorage } from '@/utils/storage';
+import { signIn } from '@/services/auth';
+import { useAuth } from '@/providers/AuthProvider';
 
 const { width, height } = Dimensions.get('window');
 
@@ -42,38 +43,40 @@ const LoginScreen: React.FC = () => {
     ? require('@/assets/images/logo-dark.png') // Your dark mode logo
     : require('@/assets/images/logo-light.png'); // Your light mode logo
 
+  const validateEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
   const handleLogin = async (): Promise<void> => {
-    if (!email || !password) {
+    // Input validation
+    if (!email.trim() || !password.trim()) {
       Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+
+    if (!validateEmail(email.trim())) {
+      Alert.alert('Error', 'Please enter a valid email address');
+      return;
+    }
+
+    if (password.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters');
       return;
     }
 
     setIsLoading(true);
     
     try {
-      // TODO: Replace with actual authentication logic
-      // For now, simulate login
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Sign in with Firebase
+      await signIn(email.trim(), password);
       
-      // Simulate successful login
-      const mockToken = 'mock_jwt_token_' + Date.now();
-      const mockUserData = {
-        id: '1',
-        email,
-        username: email.split('@')[0],
-        profilePicture: null,
-      };
-      
-      // Save to storage
-      await userStorage.setToken(mockToken);
-      await userStorage.setUserData(mockUserData);
-      
-      // Navigate to tabs
+      // Navigation will be handled by auth state change in AuthProvider
       router.replace('/(tabs)');
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Login error:', error);
-      Alert.alert('Login Failed', 'Please check your credentials and try again');
+      Alert.alert('Login Failed', error.message || 'Please check your credentials and try again');
     } finally {
       setIsLoading(false);
     }

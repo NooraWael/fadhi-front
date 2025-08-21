@@ -19,6 +19,8 @@ import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 
 import { useTheme } from '@/hooks/useThemeColor';
+import { signUp, checkUsernameAvailability } from '@/services/auth';
+import { useAuth } from '@/providers/AuthProvider';
 
 const { width, height } = Dimensions.get('window');
 
@@ -48,9 +50,88 @@ const SignUpScreen: React.FC = () => {
     ? require('@/assets/images/logo-dark.png')
     : require('@/assets/images/logo-light.png');
 
+  const validateEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const validatePhone = (phone: string): boolean => {
+    const phoneRegex = /^[\+]?[1-9][\d]{0,15}$/;
+    return phoneRegex.test(phone.replace(/\s/g, ''));
+  };
+
+  const validateUsername = (username: string): boolean => {
+    const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
+    return usernameRegex.test(username);
+  };
+
   const handleSignUp = async (): Promise<void> => {
-    // TODO: Implement sign up logic
-    Alert.alert('Sign Up', 'Sign up functionality will be implemented here');
+    // Input validation
+    if (!firstName.trim() || !lastName.trim() || !username.trim() || !email.trim() || !phone.trim() || !password.trim() || !confirmPassword.trim()) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+
+    if (!validateEmail(email.trim())) {
+      Alert.alert('Error', 'Please enter a valid email address');
+      return;
+    }
+
+    if (!validateUsername(username.trim())) {
+      Alert.alert('Error', 'Username must be 3-20 characters long and contain only letters, numbers, and underscores');
+      return;
+    }
+
+    if (!validatePhone(phone.trim())) {
+      Alert.alert('Error', 'Please enter a valid phone number');
+      return;
+    }
+
+    if (password.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      Alert.alert('Error', 'Passwords do not match');
+      return;
+    }
+
+    if (!agreeToTerms) {
+      Alert.alert('Error', 'Please agree to the Terms of Service and Privacy Policy');
+      return;
+    }
+
+    setIsLoading(true);
+    
+    try {
+      // Check username availability first
+      const isUsernameAvailable = await checkUsernameAvailability(username.trim());
+      if (!isUsernameAvailable) {
+        Alert.alert('Error', 'Username is already taken. Please choose a different one.');
+        setIsLoading(false);
+        return;
+      }
+
+      // Create account with Firebase
+      await signUp({
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        username: username.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
+        password: password,
+      });
+      
+      // Navigation will be handled by auth state change in AuthProvider
+      router.replace('/(tabs)');
+      
+    } catch (error: any) {
+      console.error('Sign up error:', error);
+      Alert.alert('Sign Up Failed', error.message || 'Failed to create account. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleGoogleSignUp = async (): Promise<void> => {

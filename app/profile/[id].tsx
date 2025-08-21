@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -17,15 +17,20 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 
 import { useTheme } from '@/hooks/useThemeColor';
+import { useAuth } from '@/providers/AuthProvider';
+import { updateUserProfile, checkUsernameAvailability } from '@/services/auth';
+import { uploadProfilePicture } from '@/services/imageUpload';
 
 const { width, height } = Dimensions.get('window');
 
 interface UserProfile {
   id: string;
   username: string;
-  fullName: string;
+  firstName: string;
+  lastName: string;
   profilePicture: string;
   bio: string;
   phoneNumber: string;
@@ -37,30 +42,60 @@ interface UserProfile {
 const EditProfilePage: React.FC = () => {
   const theme = useTheme();
   const isDarkMode = theme.text === '#FAF7F0';
+  const { user, userProfile, refreshProfile } = useAuth();
   
-  // Mock current user profile data
-  const [originalProfile] = useState<UserProfile>({
-    id: 'user1',
-    username: 'you_username',
-    fullName: 'Your Name',
-    profilePicture: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&h=150&fit=crop&crop=face',
-    bio: 'Love music, coffee, and good conversations ✨',
-    phoneNumber: '+973 9876 5432',
-    email: 'you@example.com',
-    joinDate: new Date('2024-01-15'),
-    isOnline: true,
-  });
-
-  // Form states
-  const [fullName, setFullName] = useState(originalProfile.fullName);
-  const [username, setUsername] = useState(originalProfile.username);
-  const [bio, setBio] = useState(originalProfile.bio);
-  const [phoneNumber, setPhoneNumber] = useState(originalProfile.phoneNumber);
-  const [email, setEmail] = useState(originalProfile.email);
-  const [profilePicture, setProfilePicture] = useState(originalProfile.profilePicture);
+  // Debug logging
+  console.log('🔍 EditProfilePage - user:', user?.uid);
+  console.log('🔍 EditProfilePage - userProfile:', userProfile);
+  
+  // Form states - initialize with empty values, will be populated from Firebase
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [username, setUsername] = useState('');
+  const [bio, setBio] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [email, setEmail] = useState('');
+  const [profilePicture, setProfilePicture] = useState('');
   
   const [isLoading, setIsLoading] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
+  const [isCheckingUsername, setIsCheckingUsername] = useState(false);
+  const [usernameError, setUsernameError] = useState('');
+
+  // Original values for comparison
+  const [originalValues, setOriginalValues] = useState({
+    firstName: '',
+    lastName: '',
+    username: '',
+    bio: '',
+    phoneNumber: '',
+    email: '',
+    profilePicture: '',
+  });
+
+  // Load user data when component mounts
+  useEffect(() => {
+    if (userProfile && user) {
+      const values = {
+        firstName: userProfile.firstName || '',
+        lastName: userProfile.lastName || '',
+        username: userProfile.username || '',
+        bio: userProfile.bio || "Hey there! I'm new to فاضي ✨",
+        phoneNumber: userProfile.phone || '',
+        email: userProfile.email || user.email || '',
+        profilePicture: userProfile.profilePicture || '',
+      };
+      
+      setFirstName(values.firstName);
+      setLastName(values.lastName);
+      setUsername(values.username);
+      setBio(values.bio);
+      setPhoneNumber(values.phoneNumber);
+      setEmail(values.email);
+      setProfilePicture(values.profilePicture);
+      setOriginalValues(values);
+    }
+  }, [userProfile, user]);
 
   // Background image based on theme
   const backgroundImage = isDarkMode 
@@ -70,15 +105,16 @@ const EditProfilePage: React.FC = () => {
   // Check if there are any changes
   React.useEffect(() => {
     const changes = 
-      fullName !== originalProfile.fullName ||
-      username !== originalProfile.username ||
-      bio !== originalProfile.bio ||
-      phoneNumber !== originalProfile.phoneNumber ||
-      email !== originalProfile.email ||
-      profilePicture !== originalProfile.profilePicture;
+      firstName !== originalValues.firstName ||
+      lastName !== originalValues.lastName ||
+      username !== originalValues.username ||
+      bio !== originalValues.bio ||
+      phoneNumber !== originalValues.phoneNumber ||
+      email !== originalValues.email ||
+      profilePicture !== originalValues.profilePicture;
     
     setHasChanges(changes);
-  }, [fullName, username, bio, phoneNumber, email, profilePicture]);
+  }, [firstName, lastName, username, bio, phoneNumber, email, profilePicture, originalValues]);
 
   const handleGoBack = () => {
     if (hasChanges) {
@@ -104,17 +140,71 @@ const EditProfilePage: React.FC = () => {
       'Change Profile Picture',
       'Choose an option',
       [
-        { text: 'Camera', onPress: () => console.log('Camera selected') },
-        { text: 'Gallery', onPress: () => console.log('Gallery selected') },
+        { text: 'Camera', onPress: openCamera },
+        { text: 'Gallery', onPress: openGallery },
         { text: 'Remove Photo', style: 'destructive', onPress: () => setProfilePicture('') },
         { text: 'Cancel', style: 'cancel' }
       ]
     );
   };
 
+  const openCamera = async () => {
+    try {
+      // Request camera permissions
+      const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
+      
+      if (cameraPermission.status !== 'granted') {
+        Alert.alert('Permission Required', 'Camera permission is required to take photos.');
+        return;
+      }
+
+      // Launch camera
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setProfilePicture(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Camera error:', error);
+      Alert.alert('Error', 'Failed to open camera');
+    }
+  };
+
+  const openGallery = async () => {
+    try {
+      // Request media library permissions
+      const galleryPermission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (galleryPermission.status !== 'granted') {
+        Alert.alert('Permission Required', 'Gallery permission is required to select photos.');
+        return;
+      }
+
+      // Launch gallery
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setProfilePicture(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Gallery error:', error);
+      Alert.alert('Error', 'Failed to open gallery');
+    }
+  };
+
   const handleSaveProfile = async () => {
-    if (!fullName.trim()) {
-      Alert.alert('Error', 'Full name is required');
+    if (!firstName.trim() || !lastName.trim()) {
+      Alert.alert('Error', 'First name and last name are required');
       return;
     }
 
@@ -141,20 +231,79 @@ const EditProfilePage: React.FC = () => {
 
     setIsLoading(true);
     
-    // Simulate API call
-    setTimeout(() => {
+    try {
+      // Check username availability if it changed
+      if (username !== originalValues.username) {
+        const isAvailable = await checkUsernameAvailability(username);
+        if (!isAvailable) {
+          Alert.alert('Error', 'Username is already taken');
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      let finalProfilePictureURL = profilePicture;
+      let profilePicturePath = userProfile?.profilePicturePath;
+
+      // Handle profile picture upload if it's a local URI (starts with file://)
+      if (profilePicture && profilePicture.startsWith('file://') && user?.uid) {
+        console.log('🔍 Uploading new profile picture...');
+        try {
+          const uploadResult = await uploadProfilePicture(
+            profilePicture,
+            user.uid,
+            userProfile?.profilePicturePath || undefined
+          );
+          finalProfilePictureURL = uploadResult.downloadURL;
+          profilePicturePath = uploadResult.path;
+          console.log('🔍 Profile picture uploaded successfully:', finalProfilePictureURL);
+        } catch (uploadError) {
+          console.error('Profile picture upload failed:', uploadError);
+          Alert.alert('Upload Failed', 'Failed to upload profile picture. Please try again.');
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      // Update profile in Firebase
+      if (user?.uid) {
+        const updateData: any = {
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          username: username.toLowerCase().trim(),
+          phone: phoneNumber.trim(),
+          email: email.trim(),
+          bio: bio.trim(),
+          profilePicture: finalProfilePictureURL || null,
+        };
+
+        // Only update profilePicturePath if we uploaded a new image
+        if (profilePicture && profilePicture.startsWith('file://')) {
+          updateData.profilePicturePath = profilePicturePath;
+        }
+
+        await updateUserProfile(user.uid, updateData);
+
+        // Refresh profile data
+        await refreshProfile();
+
+        Alert.alert(
+          'Success',
+          'Profile updated successfully!',
+          [
+            { 
+              text: 'OK', 
+              onPress: () => router.back()
+            }
+          ]
+        );
+      }
+    } catch (error: any) {
+      console.error('Profile update error:', error);
+      Alert.alert('Update Failed', error.message || 'Failed to update profile');
+    } finally {
       setIsLoading(false);
-      Alert.alert(
-        'Success',
-        'Profile updated successfully!',
-        [
-          { 
-            text: 'OK', 
-            onPress: () => router.back()
-          }
-        ]
-      );
-    }, 1500);
+    }
   };
 
   const renderInputField = (
@@ -288,12 +437,21 @@ const EditProfilePage: React.FC = () => {
           {/* Form Fields */}
           <View style={styles.formContainer}>
             {renderInputField(
-              'Full Name',
-              fullName,
-              setFullName,
-              'Enter your full name',
+              'First Name',
+              firstName,
+              setFirstName,
+              'Enter your first name',
               false,
-              50
+              30
+            )}
+
+            {renderInputField(
+              'Last Name',
+              lastName,
+              setLastName,
+              'Enter your last name',
+              false,
+              30
             )}
 
             {renderInputField(
@@ -344,13 +502,13 @@ const EditProfilePage: React.FC = () => {
             
             <View style={styles.infoRow}>
               <Text style={[styles.infoLabel, { color: theme.text, opacity: 0.7 }]}>User ID:</Text>
-              <Text style={[styles.infoValue, { color: theme.text }]}>{originalProfile.id}</Text>
+              <Text style={[styles.infoValue, { color: theme.text }]}>{user?.uid || 'N/A'}</Text>
             </View>
             
             <View style={styles.infoRow}>
               <Text style={[styles.infoLabel, { color: theme.text, opacity: 0.7 }]}>Member since:</Text>
               <Text style={[styles.infoValue, { color: theme.text }]}>
-                {originalProfile.joinDate.toLocaleDateString()}
+                {userProfile?.createdAt ? new Date(userProfile.createdAt.seconds * 1000).toLocaleDateString() : 'N/A'}
               </Text>
             </View>
           </View>
